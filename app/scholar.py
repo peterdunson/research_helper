@@ -54,14 +54,27 @@ def search_scholar(query: str, max_results: int = 10, sort_by: str = "relevance"
                 pdf_tag = entry.find_parent().select_one(".gs_ggsd a")
                 pdf_link = pdf_tag["href"] if pdf_tag else None
 
+                # citation count
+                citations = None
+                footer = entry.find_next_sibling("div", class_="gs_fl")
+                if footer:
+                    cite_link = footer.find("a", string=lambda s: s and "Cited by" in s)
+                    if cite_link:
+                        try:
+                            citations = int(cite_link.text.split("Cited by")[-1].strip())
+                        except ValueError:
+                            citations = None
+
                 results.append({
                     "title": title,
                     "link": link,
                     "scholar_link": scholar_link,
                     "pdf_link": pdf_link,
                     "snippet": snippet_text,
-                    "authors_year": authors_year_text
+                    "authors_year": authors_year_text,
+                    "citations": citations
                 })
+
 
                 if len(results) >= max_results:
                     break

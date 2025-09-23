@@ -1,5 +1,6 @@
 import streamlit as st
 from app.scholar import search_scholar
+from llm_wrapper import summarize_paper  # ⬅️ import the new helper
 
 st.title("📚 Research Helper")
 
@@ -12,9 +13,22 @@ if st.button("Search"):
     for paper in results:
         st.markdown(f"### 📄 {paper['title']}")
         st.markdown(f"👤 {paper['authors_year']}")
+        if paper.get("citations") is not None:
+            st.markdown(f"🔢 Cited by: {paper['citations']}")   # 👈 add this
+
+
         if paper['pdf_link']:
             st.markdown(f"[🔗 PDF Link]({paper['pdf_link']})")
         elif paper['scholar_link']:
             st.markdown(f"[🔗 Link]({paper['scholar_link']})")
-        st.markdown(f"📝 {paper['snippet']}")
+
+        # 🔹 Add concise AI summary (if snippet/title exist)
+        if paper['title'] or paper['snippet']:
+            summary = summarize_paper(
+                title=paper['title'],
+                snippet=paper['snippet'],
+                authors_year=paper['authors_year']
+            )
+            st.markdown(f"**AI Summary:** {summary}")
+
         st.markdown("---")

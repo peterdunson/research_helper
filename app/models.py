@@ -9,6 +9,7 @@ class Paper(BaseModel):
     pdf_link: Optional[str]
     snippet: Optional[str]
     authors_year: Optional[str]
+    citations: Optional[int] 
 
 def clean_text(text: str) -> str:
     """Remove non-ASCII characters and tidy up spaces."""

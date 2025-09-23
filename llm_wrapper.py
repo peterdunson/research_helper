@@ -33,12 +33,33 @@ def format_with_llm(query: str, max_results: int = 10, sort_by: str = "relevance
 
     # Step 3: call LLM
     response = client.chat.completions.create(
-        model="gpt-4o-mini",  # can switch to gpt-4o or gpt-4.1 if you prefer
+        model="gpt-5-mini",  # can switch to gpt-4o or gpt-4.1 if you prefer
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
     )
 
     return response.choices[0].message.content
+
+
+def summarize_paper(title: str, snippet: str, authors_year: str = "") -> str:
+    """Generate a concise AI summary (3-4 sentences) of a paper."""
+    context = f"Title: {title}\nAuthors/Year: {authors_year}\nSnippet: {snippet}"
+
+    prompt = f"""
+    Please summarize the following academic paper in 3-4 sentences, maximum.
+    Focus only on the main idea, methods, and contribution.
+    Avoid unnecessary details.
+
+    {context}
+    """
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+    )
+
+    return response.choices[0].message.content.strip()
 
 
 if __name__ == "__main__":
