@@ -7,7 +7,7 @@ A lightweight toolkit for automating and streamlining research workflows, aimed 
 - Project structure templates for reproducible research
 - Tools for managing and formatting bibliographies
 - Utilities for data cleaning and preprocessing
-- Scripts for automating common research tasks
+- Scripts for automating tasks such as scraping Google Scholar and formatting results with OpenAI LLMs
 
 ## Getting Started
 
@@ -17,14 +17,41 @@ A lightweight toolkit for automating and streamlining research workflows, aimed 
    cd research_helper
    ```
 
-2. **Explore the tools:**
-   - Browse the scripts and folders to find utilities that fit your research workflow.
-   - See individual script documentation for usage details.
+2. **Set up your environment variables:**
+
+   This project requires access to the OpenAI API.  
+   You must create a `.env` file in the root directory with your OpenAI API key.
+
+   Example `.env` file:
+   ```
+   OPENAI_API_KEY=sk-...your-key-here...
+   ```
+
+   The project uses [`python-dotenv`](https://pypi.org/project/python-dotenv/) to load environment variables.
+
+3. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Using the scrapper:**
+
+   The main scraping logic is in `app/scholar.py` (`search_scholar` function).  
+   To run an end-to-end workflow that scrapes Google Scholar and formats results with an OpenAI LLM, use `llm_wrapper.py`:
+
+   ```bash
+   python llm_wrapper.py
+   ```
+
+   This will run a sample query and print formatted paper results.
+
+   - You can modify the query or integrate the modules into your own scripts.
+   - Make sure your `.env` file is present and your API key is valid.
 
 ## Requirements
 
-- Python 3.7+ (for Python scripts)
-- Additional requirements may be listed in individual script headers or a `requirements.txt` file.
+- Python 3.7+
+- See `requirements.txt` for dependencies.
 
 ## Contributing
 
