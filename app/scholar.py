@@ -90,6 +90,13 @@ def search_scholar(query: str, max_results: int = 10, sort_by: str = "relevance"
             time.sleep(1)  # polite delay
 
         browser.close()
+        # Post-process: allow sorting by citations if requested
+    if sort_by == "citations":
+        results = sorted(
+            results,
+            key=lambda r: (r.get("citations") or 0),
+            reverse=True
+        )
 
     return results
 

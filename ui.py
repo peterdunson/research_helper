@@ -6,15 +6,16 @@ st.title("📚 Research Helper")
 
 query = st.text_input("Enter your research query:")
 max_results = st.slider("Number of results", 1, 50, 10)
-sort_by = st.selectbox("Sort by", ["relevance", "date"])
+sort_by = st.selectbox("Sort by", ["relevance", "date", "citations"])
 
 if st.button("Search"):
     results = search_scholar(query, max_results=max_results, sort_by=sort_by)
     for paper in results:
         st.markdown(f"### 📄 {paper['title']}")
         st.markdown(f"👤 {paper['authors_year']}")
-        if paper.get("citations") is not None:
-            st.markdown(f"🔢 Cited by: {paper['citations']}")   # 👈 add this
+        if paper.get("citations"):
+            st.markdown(f"🔢 Citations: {paper['citations']}")
+
 
 
         if paper['pdf_link']:
