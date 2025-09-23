@@ -1,23 +1,29 @@
-from fastapi import FastAPI
-from typing import List
+from fastapi import FastAPI, Query
+from typing import List, Union
 from app.scholar import search_scholar
-from app.models import Paper
+from app.models import Paper, format_results_for_llm
 
-app = FastAPI(
-    title="Research Helper API",
-    description="Scrapes Google Scholar for research papers and returns structured results.",
-    version="0.1.0"
-)
+app = FastAPI()
 
 @app.get("/ping")
 def ping():
     return {"message": "pong"}
 
-@app.get("/search", response_model=List[Paper])
-def search(query: str, max_results: int = 5):
+@app.get("/search")
+def search(
+    query: str,
+    max_results: int = Query(10, ge=1, le=50),
+    sort_by: str = Query("relevance", pattern="^(relevance|date)$"),
+    raw: bool = False
+) -> Union[List[Paper], dict]:
     """
-    Search Google Scholar for papers matching the query.
-    - **query**: search keywords
-    - **max_results**: number of results to return (default: 5)
+    Search Google Scholar.
+    - raw=true → return JSON (list of Paper objects)
+    - raw=false → return formatted text for LLMs
     """
-    return search_scholar(query, max_results)
+    results = search_scholar(query, max_results=max_results, sort_by=sort_by)
+
+    if raw:
+        return results  # validated as JSON
+    else:
+        return {"results": format_results_for_llm(results)}
