@@ -1,4 +1,4 @@
-# research_helper
+# research_helper (LLM wrapper using custom scholar.google scrapper)
 
 A lightweight toolkit for automating and streamlining research workflows, aimed at academics and data scientists. This repository provides a set of scripts, utilities, and templates to assist with research project organization, literature management, data processing, and reproducible analysis.
 
@@ -63,3 +63,4 @@ This project is licensed under the MIT License.
 
 ---
 *Created by Peter Dunson*
+
