@@ -4,7 +4,7 @@ import html
 from urllib.parse import quote_plus
 import time
 
-def search_scholar(query: str, max_results: int = 10, sort_by: str = "relevance"):
+def search_scholar(query: str, max_results: int = 10, sort_by: str = "relevance", year_min: int = None, year_max: int = None):
     """
     Scrape Google Scholar for papers.
     :param query: search keywords
@@ -26,7 +26,13 @@ def search_scholar(query: str, max_results: int = 10, sort_by: str = "relevance"
         for i in range(pages):
             start = i * per_page
             url = f"https://scholar.google.com/scholar?hl=en&q={encoded_query}&start={start}&scisbd={sort_param}"
+            if year_min is not None:
+                url += f"&as_ylo={year_min}"
+            if year_max is not None:
+                url += f"&as_yhi={year_max}"
+            
             page.goto(url)
+
 
             html_content = page.content()
             soup = BeautifulSoup(html_content, "html.parser")

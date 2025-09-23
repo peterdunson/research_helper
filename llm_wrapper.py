@@ -62,8 +62,51 @@ def summarize_paper(title: str, snippet: str, authors_year: str = "") -> str:
     return response.choices[0].message.content.strip()
 
 
+def rerank_papers(query: str, papers: list, top_n: int = 10) -> list:
+    """Ask the LLM to rerank scraped papers by relevance to the query."""
+    # Compact representation for efficiency
+    compact_list = "\n\n".join(
+        f"[{i+1}] {p['title']} — {p.get('authors_year','')}\n{p.get('snippet','')}"
+        for i, p in enumerate(papers)
+    )
+
+    prompt = f"""
+    You are an academic assistant. The user query is:
+
+    {query}
+
+    Here is a list of papers scraped from Google Scholar:
+
+    {compact_list}
+
+    Please rank these papers by **relevance to the query** and return only the top {top_n}.
+    Return the result as a JSON array of indices (e.g., [2, 5, 1, ...]).
+    """
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0,
+    )
+
+    import ast
+    try:
+        ranked_indices = ast.literal_eval(response.choices[0].message.content.strip())
+    except Exception:
+        ranked_indices = list(range(min(top_n, len(papers))))  # fallback
+
+    return [papers[i-1] for i in ranked_indices if 0 < i <= len(papers)]
+
+
 if __name__ == "__main__":
     query = "bayesian regression"
-    formatted = format_with_llm(query, max_results=5, sort_by="date")
-    print(formatted)
+    # Scrape more, rerank, then show top 5
+    raw_papers = search_scholar(query, max_results=30, sort_by="relevance")
+    top_papers = rerank_papers(query, raw_papers, top_n=5)
+
+    for p in top_papers:
+        print("📄", p["title"])
+        print("👤", p["authors_year"])
+        print("📝", p["snippet"])
+        print()
 
