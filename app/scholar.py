@@ -33,6 +33,9 @@ def search_scholar(query: str, max_results: int = 10, sort_by: str = "relevance"
             entries = soup.select(".gs_ri")
 
             for entry in entries:
+                print("\n=== ENTRY DEBUG ===")
+                print(entry.prettify())
+
                 title_tag = entry.select_one("h3 a")
                 title = html.unescape(title_tag.text.strip()) if title_tag else "No title"
                 link = title_tag["href"] if title_tag else None
@@ -42,6 +45,7 @@ def search_scholar(query: str, max_results: int = 10, sort_by: str = "relevance"
 
                 authors_year = entry.select_one(".gs_a")
                 authors_year_text = html.unescape(authors_year.text.strip()) if authors_year else ""
+                print(entry.prettify()[:1000])
 
                 scholar_link = None
                 if title_tag and title_tag.has_attr("href"):
@@ -56,14 +60,15 @@ def search_scholar(query: str, max_results: int = 10, sort_by: str = "relevance"
 
                 # citation count
                 citations = None
-                footer = entry.find_next_sibling("div", class_="gs_fl")
+                footer = entry.select_one(".gs_fl")
                 if footer:
                     cite_link = footer.find("a", string=lambda s: s and "Cited by" in s)
                     if cite_link:
                         try:
-                            citations = int(cite_link.text.split("Cited by")[-1].strip())
+                            citations = int(cite_link.text.replace("Cited by", "").strip())
                         except ValueError:
                             citations = None
+
 
                 results.append({
                     "title": title,
@@ -87,4 +92,13 @@ def search_scholar(query: str, max_results: int = 10, sort_by: str = "relevance"
         browser.close()
 
     return results
+
+if __name__ == "__main__":
+    print("🔎 Testing scholar scraper...\n")
+    results = search_scholar("bayesian regression", max_results=3, sort_by="relevance")
+    for idx, r in enumerate(results, 1):
+        print(f"\n=== Result {idx} ===")
+        for key, value in r.items():
+            print(f"{key}: {value}")
+
 
