@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-# from app.scholar import search_scholar
+from app.scholar import search_scholar
 
 app = FastAPI()
 
@@ -7,6 +7,6 @@ app = FastAPI()
 def ping():
     return {"message": "pong"}
 
-# @app.get("/search")
-# def search(query: str, max_results: int = 5):
-#     return search_scholar(query, max_results)
+@app.get("/search")
+def search(query: str, max_results: int = 5):
+    return search_scholar(query, max_results)
