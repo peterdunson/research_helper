@@ -4,3 +4,4 @@ playwright
 beautifulsoup4
 openai
 python-dotenv
+streamlit
