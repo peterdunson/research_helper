@@ -7,14 +7,13 @@ import math
 import re
 from difflib import SequenceMatcher
 
-def search_scholar(query: str, pool_size: int = 100, sort_by: str = "relevance", year_min: int = None, year_max: int = None):
+
+def search_scholar(query: str, pool_size: int = 100, sort_by: str = "relevance"):
     """
     Scrape Google Scholar for a pool of papers (larger than needed).
     :param query: search keywords
-    :param pool_size: how many papers to scrape before ranking
+    :param pool_size: how many papers to scrape
     :param sort_by: "relevance" (default) or "date"
-    :param year_min: minimum year filter
-    :param year_max: maximum year filter
     """
     results = []
     encoded_query = quote_plus(query)
@@ -31,10 +30,6 @@ def search_scholar(query: str, pool_size: int = 100, sort_by: str = "relevance",
         for i in range(pages):
             start = i * per_page
             url = f"https://scholar.google.com/scholar?hl=en&q={encoded_query}&start={start}&scisbd={sort_param}"
-            if year_min is not None:
-                url += f"&as_ylo={year_min}"
-            if year_max is not None:
-                url += f"&as_yhi={year_max}"
             
             page.goto(url)
             html_content = page.content()
@@ -60,7 +55,8 @@ def search_scholar(query: str, pool_size: int = 100, sort_by: str = "relevance",
                         else title_tag["href"]
                     )
 
-                pdf_tag = entry.find_parent().select_one(".gs_ggsd a")
+                # PDF link (handle multiple Scholar layouts)
+                pdf_tag = entry.select_one(".gs_or_ggsm a, .gs_ggsd a")
                 pdf_link = pdf_tag["href"] if pdf_tag else None
 
                 # citation count
@@ -98,26 +94,27 @@ def search_scholar(query: str, pool_size: int = 100, sort_by: str = "relevance",
     return results
 
 
-def rank_papers(query: str, papers: list, max_results: int = 10):
+def rank_papers(query: str, papers: list, max_results: int = 20):
     """
-    Rank scraped papers using heuristic: similarity + citations + recency.
+    Heuristic filtering stage: rank by similarity + citations + recency.
+    Returns top max_results to feed into the LLM.
     """
     scored = []
     for paper in papers:
-        # similarity
+        # similarity (title > snippet)
         sim = 0.0
-        if paper["title"]:
+        if paper.get("title"):
             sim = SequenceMatcher(None, query.lower(), paper["title"].lower()).ratio()
-        elif paper["snippet"]:
+        elif paper.get("snippet"):
             sim = SequenceMatcher(None, query.lower(), paper["snippet"].lower()).ratio()
 
         # citations (log scaled)
-        cites = math.log1p(paper["citations"]) if paper["citations"] else 0.0
+        cites = math.log1p(paper["citations"]) if paper.get("citations") else 0.0
 
-        # recency
+        # recency boost (2000 → 0.0, 2025 → 1.0)
         recency = 0.0
-        if paper["year"]:
-            recency = max(0, (paper["year"] - 2000) / 25.0)  # normalize ~2000–2025
+        if paper.get("year"):
+            recency = max(0, (paper["year"] - 2000) / 25.0)
 
         # weighted score
         score = 0.5 * sim + 0.3 * (cites / 10) + 0.2 * recency
@@ -130,10 +127,12 @@ def rank_papers(query: str, papers: list, max_results: int = 10):
 if __name__ == "__main__":
     print("🔎 Testing scholar scraper...\n")
     pool = search_scholar("bayesian regression", pool_size=50, sort_by="relevance")
-    ranked = rank_papers("bayesian regression", pool, max_results=5)
+    ranked = rank_papers("bayesian regression", pool, max_results=10)
 
     for idx, r in enumerate(ranked, 1):
         print(f"\n=== Ranked Result {idx} ===")
         for key, value in r.items():
             print(f"{key}: {value}")
+
+
 
