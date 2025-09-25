@@ -15,7 +15,7 @@ max_results = st.slider("Number of results to show", 1, 20, 10, key="max_results
 sort_by = st.selectbox("Sort by", ["relevance", "date"], key="sort_by_select")
 
 # Algorithm choice
-algorithm = st.selectbox("Ranking Algorithm", ["Standard", "Super Smart"])
+algorithm = st.selectbox("Ranking Algorithm", ["Standard", "Super Smart", "Super Super Smart (Bayesian)"])
 
 # Algorithm weight controls (only for Standard)
 if algorithm == "Standard":
@@ -32,7 +32,7 @@ if algorithm == "Standard":
         st.warning("All weights are zero — falling back to defaults (0.5, 0.3, 0.2).")
         w_sim, w_cites, w_recency = 0.5, 0.3, 0.2
 else:
-    # Defaults (not used in Super Smart but required by function signature)
+    # Defaults (not used in Smart or Bayesian, but required by function signature)
     w_sim, w_cites, w_recency = 0.5, 0.3, 0.2
 
 # Search button
@@ -46,14 +46,22 @@ if st.button("Search", key="search_button"):
             advanced_query += f' author:"{author}"'
 
         with st.spinner("🔎 Searching and analyzing papers..."):
-            # Run pipeline: scrape → filter (standard or smart) → LLM select
+            # Decide algorithm flag
+            if algorithm == "Super Smart":
+                algo_flag = "smart"
+            elif algorithm.startswith("Super Super"):
+                algo_flag = "bayesian"
+            else:
+                algo_flag = "standard"
+
+            # Run pipeline: scrape → filter → (LLM if not Bayesian)
             results = llm_select_papers(
                 advanced_query,
                 pool_size=50,        # scrape pool
                 filter_top_k=20,     # heuristic filter size
                 final_top_n=max_results,
                 sort_by=sort_by,
-                algorithm="smart" if algorithm == "Super Smart" else "standard",
+                algorithm=algo_flag,
                 w_sim=w_sim,
                 w_cites=w_cites,
                 w_recency=w_recency
@@ -81,4 +89,5 @@ if st.button("Search", key="search_button"):
                 st.markdown(f"**AI Summary:** {summary}")
 
             st.markdown("---")
+
 

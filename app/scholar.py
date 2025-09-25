@@ -12,6 +12,8 @@ from openai import OpenAI
 import os
 from dotenv import load_dotenv
 from openai import OpenAI
+import pymc as pm
+import numpy as np
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -199,6 +201,61 @@ def smart_rank_papers(query: str, papers: list, max_results: int = 20, tau: floa
     # Sort by score
     scored.sort(key=lambda x: x[0], reverse=True)
     return [p for _, p in scored[:max_results]]
+
+
+
+def bayesian_rank_papers(query: str, papers: list, max_results: int = 20):
+    """
+    Bayesian linear model filter:
+    Uses semantic similarity, citation score (per year), and recency.
+    Returns top max_results papers by posterior predictive mean relevance.
+    """
+
+    # Build feature matrix
+    X, paper_list = [], []
+    current_year = datetime.now().year
+
+    for paper in papers:
+        # Features
+        sim = 0.0
+        if paper.get("title"):
+            sim = SequenceMatcher(None, query.lower(), paper["title"].lower()).ratio()
+        elif paper.get("snippet"):
+            sim = SequenceMatcher(None, query.lower(), paper["snippet"].lower()).ratio()
+
+        cites = paper.get("citations") or 0
+        year = paper.get("year") or current_year
+        age = max(1, current_year - year + 1)
+        citation_score = cites / age
+
+        recency = np.exp(-(current_year - year) / 5.0) if paper.get("year") else 0.0
+
+        X.append([sim, citation_score, recency])
+        paper_list.append(paper)
+
+    X = np.array(X)
+
+    # Priors + Bayesian linear regression
+    with pm.Model() as model:
+        # Priors on weights
+        w = pm.Normal("w", mu=[0.8, 0.5, 0.5], sigma=[0.3, 0.3, 0.3], shape=3)
+        sigma = pm.HalfNormal("sigma", sigma=1.0)
+
+        mu = pm.math.dot(X, w)
+        relevance = pm.Normal("relevance", mu=mu, sigma=sigma, observed=np.ones(len(X)))  # fake obs to anchor
+
+        trace = pm.sample(2000, tune=500, chains=4, cores=4, progressbar=True)
+
+    # Posterior mean weights
+    w_mean = trace.posterior["w"].mean(dim=["chain", "draw"]).values
+
+    # Score papers with posterior mean weights
+    scores = X @ w_mean
+    ranked = sorted(zip(scores, paper_list), key=lambda x: x[0], reverse=True)
+
+    return [p for _, p in ranked[:max_results]]
+
+
 
 
 if __name__ == "__main__":

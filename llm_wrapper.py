@@ -1,7 +1,8 @@
 import os
 import json
 import ast
-from app.scholar import search_scholar, rank_papers, smart_rank_papers  # ⬅️ import smart_rank_papers
+from app.scholar import search_scholar, rank_papers, smart_rank_papers, bayesian_rank_papers
+
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -36,15 +37,20 @@ def llm_select_papers(
     # Step 2: filter with chosen algorithm
     if algorithm == "smart":
         filtered = smart_rank_papers(query, pool, max_results=filter_top_k)
+    elif algorithm == "bayesian":
+        # Bayesian model ranks papers; no LLM rerank afterwards
+        filtered = bayesian_rank_papers(query, pool, max_results=final_top_n)
+        return filtered  # ⬅️ return directly, skip LLM re-ranking
     else:
         filtered = rank_papers(
-            query,
-            pool,
-            max_results=filter_top_k,
-            w_sim=w_sim,
-            w_cites=w_cites,
-            w_recency=w_recency,
-        )
+        query,
+        pool,
+        max_results=filter_top_k,
+        w_sim=w_sim,
+        w_cites=w_cites,
+        w_recency=w_recency,
+    )
+
 
     # Step 3: prepare compact input for LLM
     compact_list = "\n\n".join(
@@ -128,3 +134,6 @@ if __name__ == "__main__":
     )
     for p in final_papers_smart:
         print("📄", p["title"], "|", p.get("authors_year"))
+
+
+
