@@ -14,6 +14,7 @@ with st.expander("🔍 Advanced Filters"):
 # General options
 max_results = st.slider("Number of results", 1, 50, 10, key="max_results_slider")
 sort_by = st.selectbox("Sort by", ["relevance", "date"], key="sort_by_select")
+rerank_method = st.selectbox("Rerank with", ["simple (citations+recency)", "LLM-powered"], key="rerank_method")
 
 if st.button("Search", key="search_button"):
     # Build advanced query string
@@ -21,9 +22,11 @@ if st.button("Search", key="search_button"):
     if author:
         advanced_query += f' author:"{author}"'
 
-    # 🔹 Scrape *more* results than needed (e.g. 30), then rerank to top N
-    raw_results = search_scholar(advanced_query, max_results=30, sort_by=sort_by)
-    results = rerank_papers(query, raw_results, top_n=max_results)
+    # 🔹 Scrape *more* results than needed (baseline pool of 50)
+    raw_results = search_scholar(advanced_query, max_results=50, sort_by=sort_by)
+
+    # 🔹 Apply reranking
+    results = rerank_papers(query, raw_results, top_n=max_results, method=rerank_method)
 
     # Display results
     for paper in results:
@@ -47,3 +50,4 @@ if st.button("Search", key="search_button"):
             st.markdown(f"**AI Summary:** {summary}")
 
         st.markdown("---")
+
