@@ -22,26 +22,10 @@ def llm_select_papers(
     w_cites: float = 0.3,
     w_recency: float = 0.2,
 ):
-    """
-    Core pipeline:
-    1. Scrape Google Scholar (handles captcha with manual confirmation).
-    2. Filter papers using chosen algorithm.
-    3. If not bayesian, use LLM to rerank top_n.
-    """
-
-    # ✅ wait_for_user=True ensures captcha confirmation & "DONE SCRAPING" marker
+    """Scrape + filter + rerank papers."""
+    t0 = time.time()
     pool = search_scholar(query, pool_size=pool_size, sort_by=sort_by, wait_for_user=True)
-
-    # 🔁 Wait until scraping finishes
-    while not os.path.exists("scrape_done.txt"):
-        print("⏳ Waiting for scraping to finish...")
-        time.sleep(2)
-
-    print("✅ Scraping confirmed, proceeding to filtering + LLM rerank...")
-    try:
-        os.remove("scrape_done.txt")  # clear flag for next run
-    except FileNotFoundError:
-        pass
+    print(f"✅ DONE SCRAPING — got {len(pool)} results in {time.time() - t0:.2f} sec")
 
     if not pool:
         return []
@@ -50,8 +34,7 @@ def llm_select_papers(
     if algorithm == "smart":
         filtered = smart_rank_papers(query, pool, max_results=filter_top_k)
     elif algorithm == "bayesian":
-        filtered = bayesian_rank_papers(query, pool, max_results=final_top_n)
-        return filtered
+        return bayesian_rank_papers(query, pool, max_results=final_top_n)
     else:
         filtered = rank_papers(
             query,
@@ -71,30 +54,27 @@ def llm_select_papers(
         for i, p in enumerate(filtered)
     )
 
-    prompt = f"""
-    You are an academic assistant. The user query is:
+    rerank_prompt = f"""
+    The user asked about: {query}
 
-    {query}
-
-    Here is a list of candidate papers (already filtered for quality):
+    Here is a list of candidate papers:
 
     {compact_list}
 
-    Please select the {final_top_n} most relevant papers for the query.
-    Return ONLY a JSON array of indices (e.g., [2, 5, 1, ...]).
+    Select the {final_top_n} most relevant papers.
+    Return ONLY a JSON array of indices (e.g., [2, 5, 1]).
     """
 
-    # 🔄 Retry loop in case LLM fails
     for attempt in range(3):
         try:
             response = client.chat.completions.create(
                 model="gpt-5-mini",
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": rerank_prompt}]
             )
             ranked_indices = ast.literal_eval(response.choices[0].message.content.strip())
             break
         except Exception as e:
-            print(f"⚠️ LLM rerank failed on attempt {attempt+1}: {e}")
+            print(f"⚠️ LLM rerank failed attempt {attempt+1}: {e}")
             ranked_indices = []
             time.sleep(2)
     else:
@@ -104,12 +84,11 @@ def llm_select_papers(
 
 
 def summarize_paper(title: str, snippet: str, authors_year: str = "") -> str:
-    """Generate a concise AI summary (3-4 sentences) of a paper."""
+    """Generate a concise AI summary of a paper."""
     context = f"Title: {title}\nAuthors/Year: {authors_year}\nSnippet: {snippet}"
 
     prompt = f"""
-    Please summarize the following academic paper in 3-4 sentences, maximum.
-    Focus on the main idea, methods, and contribution.
+    Summarize this academic paper in 2–3 sentences:
     {context}
     """
 
@@ -123,22 +102,33 @@ def summarize_paper(title: str, snippet: str, authors_year: str = "") -> str:
 
 def chat_query(user_message: str, algorithm: str = "smart"):
     """
-    Chat-driven entrypoint:
-    1. LLM interprets user chat into algorithm parameters.
-    2. Runs llm_select_papers with chosen algorithm.
-    3. LLM summarizes results back to the user.
+    Router:
+    1. LLM decides whether to scrape or just answer.
+    2. If scrape → optimize query for Scholar, then run pipeline.
+    3. If answer → just return direct response.
     """
 
-    # Step 1: Interpret chat → parameters
-    prompt = f"""
-    Convert the user's request into JSON with fields:
-    - query
-    - sort_by ("relevance" or "date")
-    - pool_size (default 100)
-    - filter_top_k (default 20)
-    - final_top_n (default 10)
+    router_prompt = f"""
+    You are a research assistant. Decide how to handle this request.
 
-    Only output JSON.
+    If the user is asking for papers, citations, or references:
+      Output JSON like this:
+      {{
+        "action": "scrape",
+        "query": "best possible search query to get relevant results",
+        "sort_by": "relevance" or "date",
+        "pool_size": 100,
+        "filter_top_k": 20,
+        "final_top_n": number of papers the user explicitly asked for (or 10 if unspecified)
+      }}
+
+    If the user is asking a general conceptual/explanatory question (not requiring papers):
+      Output JSON like this:
+      {{
+        "action": "answer",
+        "reply": "a direct helpful response to the user"
+      }}
+
     User message:
     {user_message}
     """
@@ -146,58 +136,56 @@ def chat_query(user_message: str, algorithm: str = "smart"):
     try:
         response = client.chat.completions.create(
             model="gpt-5-mini",
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": router_prompt}]
         )
-        params = json.loads(response.choices[0].message.content.strip())
-    except Exception:
-        params = {"query": user_message, "sort_by": "relevance", "pool_size": 100,
-                  "filter_top_k": 20, "final_top_n": 10}
+        route = json.loads(response.choices[0].message.content.strip())
+    except Exception as e:
+        print(f"⚠️ Router failed: {e}")
+        route = {"action": "scrape", "query": user_message, "sort_by": "relevance",
+                 "pool_size": 100, "filter_top_k": 20, "final_top_n": 10}
 
-    # Step 2: Run algorithm
-    papers = llm_select_papers(
-        query=params.get("query", user_message),
-        pool_size=params.get("pool_size", 100),
-        filter_top_k=params.get("filter_top_k", 20),
-        final_top_n=params.get("final_top_n", 10),
-        sort_by=params.get("sort_by", "relevance"),
-        algorithm=algorithm,
-    )
+    # Direct answer path
+    if route.get("action") == "answer":
+        return route.get("reply", "⚠️ LLM did not return an answer.")
 
-    if not papers:
-        return "⚠️ No papers could be retrieved after scraping and filtering."
+    # Scrape path
+    elif route.get("action") == "scrape":
+        papers = llm_select_papers(
+            query=route.get("query", user_message),
+            pool_size=route.get("pool_size", 100),
+            filter_top_k=route.get("filter_top_k", 20),
+            final_top_n=route.get("final_top_n", 10),
+            sort_by=route.get("sort_by", "relevance"),
+            algorithm=algorithm,
+        )
 
-    # Step 3: Summarize results
-    compact_results = json.dumps(papers, indent=2)
-    summary_prompt = f"""
-    Here are some academic papers retrieved:
+        if not papers:
+            return "⚠️ No papers could be retrieved after scraping and filtering."
 
-    {compact_results}
-
-    Summarize clearly, listing:
-    - Title
-    - Authors/Year
-    - Link
-    - Short 2-3 sentence summary
-    """
-
-    for attempt in range(3):
-        try:
-            final_resp = client.chat.completions.create(
-                model="gpt-5-mini",
-                messages=[{"role": "user", "content": summary_prompt}]
+        # Format papers into conversational output
+        summaries = []
+        for p in papers:
+            summary = summarize_paper(p["title"], p.get("snippet", ""), p.get("authors_year", ""))
+            summaries.append(
+                f"**{p['title']}**\n\n"
+                f"*{p.get('authors_year','Unknown')}*\n\n"
+                f"[Link]({p.get('link') or p.get('scholar_link')})\n\n"
+                f"{summary}\n"
             )
-            reply = final_resp.choices[0].message.content.strip()
-            if reply:
-                return reply
-        except Exception as e:
-            print(f"⚠️ LLM summary failed on attempt {attempt+1}: {e}")
-            time.sleep(2)
 
-    return "⚠️ LLM failed to summarize. Raw results:\n\n" + compact_results
+        return (
+            f"Here are the top {len(papers)} papers I found based on your request:\n\n" +
+            "\n---\n".join(summaries)
+        )
+
+    else:
+        return "⚠️ Router returned unknown action."
 
 
 if __name__ == "__main__":
-    msg = "Find me recent highly cited Bayesian regression papers."
-    reply = chat_query(msg, algorithm="smart")
-    print("🤖 Chat assistant reply:\n")
-    print(reply)
+    msg1 = "Find me the 3 most cited Bayesian factor model papers in the last 5 years."
+    print(chat_query(msg1, algorithm="smart"))
+
+    msg2 = "What is a Bayesian prior?"
+    print(chat_query(msg2, algorithm="smart"))
+
