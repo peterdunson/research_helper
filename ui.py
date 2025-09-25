@@ -5,11 +5,11 @@ st.set_page_config(page_title="📚 Research Helper", layout="wide")
 
 st.title("📚 Research Helper (Chat Mode)")
 
-# Initialize chat state
+# ── Session state init ───────────────────────────────────────────────
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = []  # list of {"role": "user"/"assistant", "content": str}
 
-# Sidebar for algorithm choice
+# ── Sidebar ──────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ Settings")
     algorithm = st.selectbox(
@@ -18,7 +18,7 @@ with st.sidebar:
         index=1,
     )
 
-# Map user-friendly name → internal flag
+# Map to internal flags
 if algorithm == "Super Smart":
     algo_flag = "smart"
 elif algorithm.startswith("Super Super"):
@@ -26,26 +26,30 @@ elif algorithm.startswith("Super Super"):
 else:
     algo_flag = "standard"
 
-# Display past messages
+# ── Display chat history ─────────────────────────────────────────────
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# Input box (chat-like)
+# ── Chat input ───────────────────────────────────────────────────────
 if user_input := st.chat_input("Ask me about papers, citations, or concepts..."):
-    # Add user message
+    # Record user message
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.markdown(user_input)
 
-    # Run query directly (scraper + captcha handled inside llm_wrapper)
+    # Run query (LLM router decides scrape vs. answer)
     with st.chat_message("assistant"):
-        with st.spinner("🔎 Searching papers (solve captcha if popup appears)..."):
+        with st.spinner("🔎 Thinking (solve captcha if popup appears)..."):
             try:
-                reply = chat_query(user_input, algorithm=algo_flag)
+                reply = chat_query(
+                    user_input,
+                    algorithm=algo_flag,
+                    history=st.session_state.messages,
+                )
                 if not reply.strip():
                     reply = (
-                        "⚠️ No papers were returned. "
+                        "⚠️ No response was generated. "
                         "If a Google Scholar captcha appeared, please solve it in the popup browser. "
                         "The system will continue automatically once solved."
                     )
@@ -54,5 +58,5 @@ if user_input := st.chat_input("Ask me about papers, citations, or concepts...")
 
         st.markdown(reply)
 
-    # Add assistant reply to history
+    # Record assistant reply
     st.session_state.messages.append({"role": "assistant", "content": reply})
