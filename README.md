@@ -1,66 +1,122 @@
-# research_helper (LLM wrapper using custom scholar.google scrapper)
+# research_helper
 
-A lightweight toolkit for automating and streamlining research workflows, aimed at academics and data scientists. This repository provides a set of scripts, utilities, and templates to assist with research project organization, literature management, data processing, and reproducible analysis.
+A lightweight toolkit to help you move from idea to insight faster. research_helper provides a simple UI on top of large language models plus a small set of carefully designed algorithms to assist with common research workflows (brainstorming, structuring, synthesis, and critique).
 
-## Features
+- UI entry point: [ui.py](https://github.com/peterdunson/research_helper/blob/main/ui.py)
+- LLM wrapper and orchestration: [llm_wrapper.py](https://github.com/peterdunson/research_helper/blob/main/llm_wrapper.py)
+- Environment and dependencies: [requirements.txt](https://github.com/peterdunson/research_helper/blob/main/requirements.txt), [Dockerfile](https://github.com/peterdunson/research_helper/blob/main/Dockerfile)
 
-- Project structure templates for reproducible research
-- Tools for managing and formatting bibliographies
-- Utilities for data cleaning and preprocessing
-- Scripts for automating tasks such as scraping Google Scholar and formatting results with OpenAI LLMs
+## Key Features
 
-## Getting Started
+- Minimal, fast UI to run research workflows locally
+- Extensible LLM wrapper for prompt/parameter control and reproducibility
+- Three built-in algorithms for research assistance (see below)
+- Simple testing scaffolding in [tests/](https://github.com/peterdunson/research_helper/tree/main/tests)
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/peterdunson/research_helper.git
-   cd research_helper
-   ```
+## The Three Algorithms
 
-2. **Set up your environment variables:**
+research_helper ships with three complementary algorithms exposed via the UI. They are designed to be simple, interpretable building blocks you can mix and match:
 
-   This project requires access to the OpenAI API.  
-   You must create a `.env` file in the root directory with your OpenAI API key.
+1) Idea-to-Outline (Decompose and Structure)
+   - Goal: Turn an initial topic or question into a structured, sectioned outline with objectives, variables, and candidate methods.
+   - How it works: Uses guided prompting in stages (problem statement → sub-questions → section plan → deliverables). Emphasizes clarity and specificity over verbosity.
+   - Typical inputs: Research topic, constraints, preferred methodology.
+   - Typical outputs: Hierarchical outline with section goals, key citations to find, and a checklist of next steps.
 
-   Example `.env` file:
-   ```
-   OPENAI_API_KEY=sk-...your-key-here...
-   ```
+2) Evidence Synthesizer (Summarize and Compare)
+   - Goal: Given notes, abstracts, or excerpts, synthesize key findings, contrasts, and gaps.
+   - How it works: Normalizes inputs to a common schema, produces per-item structured summaries, then aggregates with comparison tables and gap statements.
+   - Typical inputs: Bullet notes, abstracts, selected paragraphs.
+   - Typical outputs: Consolidated summary, contrastive matrix, prioritized open questions.
 
-   The project uses [`python-dotenv`](https://pypi.org/project/python-dotenv/) to load environment variables.
+3) Critique-and-Revise (Reviewer-in-the-Loop)
+   - Goal: Provide actionable feedback on a draft section or plan, then generate a revised version.
+   - How it works: Two-pass loop—first a constrained critique (clarity, evidence, methods, limitations), then a targeted rewrite that addresses each critique point.
+   - Typical inputs: Draft paragraphs, outlines, or method plans.
+   - Typical outputs: Reviewer notes plus a revised draft that explicitly resolves each point.
 
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+Notes:
+- The UI lets you switch among algorithms and adjust model parameters.
+- The exact steps and prompts are implemented in [llm_wrapper.py](https://github.com/peterdunson/research_helper/blob/main/llm_wrapper.py). Use that file to customize prompts, temperature, max tokens, and chain logic.
 
-4. **Using the scrapper:**
+## Quick Start
 
-   The main scraping logic is in `app/scholar.py` (`search_scholar` function).  
-   To run an end-to-end workflow that scrapes Google Scholar and formats results with an OpenAI LLM, use `llm_wrapper.py`:
+Prerequisites
+- Python 3.10+ recommended
+- An API key for your chosen LLM provider (e.g., set OPENAI_API_KEY as an environment variable if using OpenAI)
 
-   ```bash
-   python llm_wrapper.py
-   ```
+Install
+```bash
+# from the repo root
+python -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-   This will run a sample query and print formatted paper results.
+Run the UI
+```bash
+python ui.py
+```
 
-   - You can modify the query or integrate the modules into your own scripts.
-   - Make sure your `.env` file is present and your API key is valid.
+Environment variables (examples)
+```bash
+export OPENAI_API_KEY=sk-...
+# Optional: model selection and defaults
+export MODEL_NAME=gpt-4o-mini
+export TEMPERATURE=0.2
+```
 
-## Requirements
+## Docker
 
-- Python 3.7+
-- See `requirements.txt` for dependencies.
+A minimal Dockerfile is included for containerized runs.
 
-## Contributing
+Build and run
+```bash
+docker build -t research_helper .
+docker run --rm -e OPENAI_API_KEY=$OPENAI_API_KEY -p 7860:7860 research_helper
+```
 
-Contributions, suggestions, and bug reports are welcome! Please submit pull requests or open issues as needed.
+## Project Structure
 
-## License
+```text
+.
+├─ README.md                # You are here
+├─ requirements.txt         # Python dependencies
+├─ Dockerfile               # Container image definition
+├─ ui.py                    # App entry point / UI
+├─ llm_wrapper.py           # LLM orchestration and algorithm logic
+├─ app/                     # UI or app-specific assets/modules
+├─ tests/                   # Basic tests and examples
+└─ __pycache__/             # Python cache (generated)
+```
 
-This project is licensed under the MIT License.
+Browse key files:
+- [ui.py](https://github.com/peterdunson/research_helper/blob/main/ui.py)
+- [llm_wrapper.py](https://github.com/peterdunson/research_helper/blob/main/llm_wrapper.py)
+- [requirements.txt](https://github.com/peterdunson/research_helper/blob/main/requirements.txt)
+- [Dockerfile](https://github.com/peterdunson/research_helper/blob/main/Dockerfile)
+- [app/](https://github.com/peterdunson/research_helper/tree/main/app)
+- [tests/](https://github.com/peterdunson/research_helper/tree/main/tests)
 
----
-*Created by Peter Dunson*
+## Usage Patterns
+
+- Rapid outlining: Start with Algorithm 1 to turn a topic into a concrete plan.
+- Literature notes → synthesis: Feed excerpts into Algorithm 2 to get a contrastive summary and gaps.
+- Tighten a draft: Use Algorithm 3 to get reviewer-style feedback and an improved revision.
+
+## Testing
+
+Run the tests (if any are present in [tests/](https://github.com/peterdunson/research_helper/tree/main/tests)):
+```bash
+pytest -q
+```
+
+## Extending
+
+- Add new algorithms by creating a new function or class in [llm_wrapper.py](https://github.com/peterdunson/research_helper/blob/main/llm_wrapper.py) and wiring it into [ui.py](https://github.com/peterdunson/research_helper/blob/main/ui.py).
+- Expose parameters (model, temperature, steps) through the UI for quick experimentation.
+- Keep prompts modular to enable A/B testing across tasks.
+
+## Disclaimer
+
+This tool assists with research workflows but does not replace domain expertise. Always verify generated claims and references.
 
