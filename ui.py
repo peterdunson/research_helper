@@ -1,93 +1,58 @@
 import streamlit as st
-from llm_wrapper import summarize_paper, llm_select_papers
+from llm_wrapper import chat_query
 
-st.title("📚 Research Helper")
+st.set_page_config(page_title="📚 Research Helper", layout="wide")
 
-# Main query input
-query = st.text_input("Enter your research query:", key="query_input")
+st.title("📚 Research Helper (Chat Mode)")
 
-# Collapsible filter section
-with st.expander("🔍 Advanced Filters"):
-    author = st.text_input("Filter by author:", key="author_filter")
+# Initialize chat state
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-# General options
-max_results = st.slider("Number of results to show", 1, 20, 10, key="max_results_slider")
-sort_by = st.selectbox("Sort by", ["relevance", "date"], key="sort_by_select")
+# Sidebar for algorithm choice
+with st.sidebar:
+    st.header("⚙️ Settings")
+    algorithm = st.selectbox(
+        "Ranking Algorithm",
+        ["Standard", "Super Smart", "Super Super Smart (Bayesian)"],
+        index=1,
+    )
 
-# Algorithm choice
-algorithm = st.selectbox("Ranking Algorithm", ["Standard", "Super Smart", "Super Super Smart (Bayesian)"])
-
-# Algorithm weight controls (only for Standard)
-if algorithm == "Standard":
-    with st.expander("⚙️ Ranking Weights"):
-        w_sim = st.slider("Similarity weight", 0.0, 1.0, 0.5, 0.01)
-        w_cites = st.slider("Citation weight", 0.0, 1.0, 0.3, 0.01)
-        w_recency = st.slider("Recency weight", 0.0, 1.0, 0.2, 0.01)
-
-    # Normalize weights
-    total = w_sim + w_cites + w_recency
-    if total > 0:
-        w_sim, w_cites, w_recency = w_sim / total, w_cites / total, w_recency / total
-    else:
-        st.warning("All weights are zero — falling back to defaults (0.5, 0.3, 0.2).")
-        w_sim, w_cites, w_recency = 0.5, 0.3, 0.2
+# Map user-friendly name → internal flag
+if algorithm == "Super Smart":
+    algo_flag = "smart"
+elif algorithm.startswith("Super Super"):
+    algo_flag = "bayesian"
 else:
-    # Defaults (not used in Smart or Bayesian, but required by function signature)
-    w_sim, w_cites, w_recency = 0.5, 0.3, 0.2
+    algo_flag = "standard"
 
-# Search button
-if st.button("Search", key="search_button"):
-    if not query.strip():
-        st.warning("Please enter a query to search.")
-    else:
-        # Build advanced query string
-        advanced_query = query
-        if author:
-            advanced_query += f' author:"{author}"'
+# Display past messages
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-        with st.spinner("🔎 Searching and analyzing papers..."):
-            # Decide algorithm flag
-            if algorithm == "Super Smart":
-                algo_flag = "smart"
-            elif algorithm.startswith("Super Super"):
-                algo_flag = "bayesian"
-            else:
-                algo_flag = "standard"
+# Input box (chat-like)
+if user_input := st.chat_input("Ask me about papers, citations, or concepts..."):
+    # Add user message
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
 
-            # Run pipeline: scrape → filter → (LLM if not Bayesian)
-            results = llm_select_papers(
-                advanced_query,
-                pool_size=50,        # scrape pool
-                filter_top_k=20,     # heuristic filter size
-                final_top_n=max_results,
-                sort_by=sort_by,
-                algorithm=algo_flag,
-                w_sim=w_sim,
-                w_cites=w_cites,
-                w_recency=w_recency
-            )
+    # Run query directly (scraper + captcha handled inside llm_wrapper)
+    with st.chat_message("assistant"):
+        with st.spinner("🔎 Searching papers (solve captcha if popup appears)..."):
+            try:
+                reply = chat_query(user_input, algorithm=algo_flag)
+                if not reply.strip():
+                    reply = (
+                        "⚠️ No papers were returned. "
+                        "If a Google Scholar captcha appeared, please solve it in the popup browser. "
+                        "The system will continue automatically once solved."
+                    )
+            except Exception as e:
+                reply = f"⚠️ Error: {str(e)}"
 
-        # Display results
-        for paper in results:
-            st.markdown(f"### 📄 {paper['title']}")
-            st.markdown(f"👤 {paper['authors_year']}")
-            if paper.get("citations"):
-                st.markdown(f"🔢 Citations: {paper['citations']}")
+        st.markdown(reply)
 
-            if paper.get("pdf_link"):
-                st.markdown(f"[🔗 PDF Link]({paper['pdf_link']})")
-            elif paper.get("scholar_link"):
-                st.markdown(f"[🔗 Link]({paper['scholar_link']})")
-
-            # AI summary
-            if paper.get("title") or paper.get("snippet"):
-                summary = summarize_paper(
-                    title=paper.get("title", ""),
-                    snippet=paper.get("snippet", ""),
-                    authors_year=paper.get("authors_year", "")
-                )
-                st.markdown(f"**AI Summary:** {summary}")
-
-            st.markdown("---")
-
-
+    # Add assistant reply to history
+    st.session_state.messages.append({"role": "assistant", "content": reply})
