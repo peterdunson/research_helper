@@ -17,20 +17,15 @@ from dotenv import load_dotenv
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-MODEL = "gpt-5-mini"  # single model everywhere (no temperature anywhere)
+MODEL = "gpt-5-mini"  # single model everywhere
 
 
-# ── Small helpers ──────────────────────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────────
 def _clip_history(history: List[Dict[str, str]], max_chars: int = 4000) -> str:
-    """
-    Turn the last few chat messages into a compact plain-text transcript that fits
-    within max_chars. This gives the LLM enough context to resolve pronouns like
-    'those papers above' without blowing up tokens.
-    """
+    """Turn last few chat messages into a compact transcript for LLM context."""
     if not history:
         return ""
 
-    # Take the last ~8 turns and trim by characters
     tail = history[-8:]
     chunks = []
     running = 0
@@ -58,17 +53,13 @@ def llm_select_papers(
     filter_top_k: int = 20,
     final_top_n: int = 10,
     sort_by: str = "relevance",
-    algorithm: str = "smart",  # "standard", "smart", "bayesian"
+    algorithm: str = "smart",
     w_sim: float = 0.5,
     w_cites: float = 0.3,
     w_recency: float = 0.2,
     history_text: str = "",
 ):
-    """
-    Scrape Scholar → filter → (optionally) LLM rerank top candidates.
-    history_text is a compact transcript snippet to help the LLM disambiguate
-    references like 'those papers'.
-    """
+    """Scrape Scholar → filter → (optionally) LLM rerank top candidates."""
     t0 = time.time()
     pool = search_scholar(query, pool_size=pool_size, sort_by=sort_by, wait_for_user=True)
     print(f"✅ DONE SCRAPING — got {len(pool)} results in {time.time() - t0:.2f} sec")
@@ -80,7 +71,6 @@ def llm_select_papers(
     if algorithm == "smart":
         filtered = smart_rank_papers(query, pool, max_results=min(filter_top_k, 30))
     elif algorithm == "bayesian":
-        # Fully model-based ranking, no LLM re-rank
         return bayesian_rank_papers(query, pool, max_results=final_top_n)
     else:
         filtered = rank_papers(
@@ -95,7 +85,7 @@ def llm_select_papers(
     if not filtered:
         return []
 
-    # Step 2. Build compact rerank input (cap to top 10–12 for speed)
+    # Step 2. Build compact rerank input (cap at top 12)
     rerank_candidates = filtered[: min(12, len(filtered))]
     compact_list = "\n\n".join(
         f"[{i+1}] {p['title']} — {p.get('authors_year','')}\n{p.get('snippet','')}"
@@ -103,22 +93,19 @@ def llm_select_papers(
     )
 
     rerank_prompt = f"""
-You are helping pick the best research papers.
-
-Conversation history (for context; resolve any 'those/the above' references from it):
+Conversation context (resolve pronouns like 'those papers'):
 {history_text}
 
 User intent/topic to rank for:
 {query}
 
-Candidate papers (already prefiltered for quality):
+Candidate papers:
 {compact_list}
 
-Select the {final_top_n} most relevant papers for the user intent above.
+Select the {final_top_n} most relevant papers.
 Return ONLY a JSON array of indices (e.g., [2, 5, 1]).
 """
 
-    # Step 3. Rerank with LLM
     ranked_indices: Optional[List[int]] = None
     for attempt in range(2):
         try:
@@ -143,12 +130,11 @@ def summarize_paper(title: str, snippet: str, authors_year: str = "", history_te
     context = f"Title: {title}\nAuthors/Year: {authors_year}\nSnippet: {snippet}"
 
     prompt = f"""
-Use the conversation context to keep tone consistent. Summarize this paper in 2–3 sentences.
-Focus on the main idea, method, and contribution. Avoid speculation.
-
 Conversation history (for style/context):
 {history_text}
 
+Summarize this academic paper in 2–3 sentences.
+Focus on the main idea, method, and contribution.
 {context}
 """
 
@@ -159,7 +145,7 @@ Conversation history (for style/context):
     return response.choices[0].message.content.strip()
 
 
-# ── Chat entrypoint (router) ───────────────────────────────────────────────────
+# ── Router (ask for confirmation before scraping) ──────────────────────────────
 def chat_query(
     user_message: str,
     algorithm: str = "smart",
@@ -167,33 +153,31 @@ def chat_query(
 ):
     """
     Router:
-    - If "answer" → respond directly using history.
-    - If "scrape" → LLM optimizes Scholar query, then scrape → filter → summarize.
-    Pass in the recent Streamlit chat: history = st.session_state.messages
-      (list of {role: "user"/"assistant", content: "..."}).
+    - If "answer" → direct response.
+    - If "scrape" → first ask user for confirmation.
     """
     history = history or []
     history_text = _clip_history(history)
 
     router_prompt = f"""
-You are a scholarly research assistant. Decide how to handle the user's request using the conversation so far.
+You are a scholarly research assistant.
 
 If the user is asking for papers, citations, references, "top N", "recent N", or "find/show me papers":
-  Output JSON exactly:
+  Output JSON:
   {{
-    "action": "scrape",
-    "query": "an optimized Google Scholar query string for the user's need (concise, include key terms, date/field qualifiers if appropriate)",
+    "action": "confirm_scrape",
+    "query": "optimized Scholar search query string",
     "sort_by": "relevance" or "date",
     "pool_size": 100,
     "filter_top_k": 20,
-    "final_top_n": <integer number of papers requested, or 10 if not clearly specified>
+    "final_top_n": <integer or 10 if not clear>
   }}
 
-If the user is asking a conceptual/explanatory question OR following up on papers you already listed (e.g., 'which one is most important', 'explain the second one', 'compare those two'):
-  Output JSON exactly:
+If the user is asking a conceptual/explanatory question OR following up on papers already listed:
+  Output JSON:
   {{
     "action": "answer",
-    "reply": "a direct, helpful, concise response grounded in the conversation history"
+    "reply": "direct helpful response (can refer to history)"
   }}
 
 Conversation history:
@@ -203,67 +187,66 @@ User message:
 {user_message}
 """
 
-    route_raw = client.chat.completions.create(
+    raw = client.chat.completions.create(
         model=MODEL,
         messages=[{"role": "user", "content": router_prompt}],
     ).choices[0].message.content
 
     route = _safe_json(
-        route_raw,
+        raw,
         fallback={
-            "action": "scrape",
-            "query": user_message,
-            "sort_by": "relevance",
-            "pool_size": 100,
-            "filter_top_k": 20,
-            "final_top_n": 10,
+            "action": "answer",
+            "reply": "Sorry, I couldn't decide how to handle that.",
         },
     )
 
-    # Direct answer path
     if route.get("action") == "answer":
-        reply = route.get("reply", "").strip()
-        return reply or "I tried to answer directly, but I didn't receive a reply payload."
+        return route.get("reply", ""), None
 
-    # Scrape path
-    if route.get("action") == "scrape":
-        # Run the end-to-end pipeline
-        papers = llm_select_papers(
-            query=route.get("query", user_message),
-            pool_size=int(route.get("pool_size", 100)),
-            filter_top_k=int(route.get("filter_top_k", 20)),
-            final_top_n=int(route.get("final_top_n", 10)),
-            sort_by=route.get("sort_by", "relevance"),
-            algorithm=algorithm,
+    if route.get("action") == "confirm_scrape":
+        return (
+            f"🤔 I think this request may require a Google Scholar search.\n\n"
+            f"Do you want me to scrape Scholar with query: **{route.get('query')}** ?",
+            route,
+        )
+
+    return "⚠️ Router returned unknown action.", None
+
+
+def run_scrape(route: dict, algorithm: str = "smart", history: Optional[List[Dict[str, str]]] = None):
+    """Actually run the scrape after user confirmation."""
+    history = history or []
+    history_text = _clip_history(history)
+
+    papers = llm_select_papers(
+        query=route.get("query", ""),
+        pool_size=int(route.get("pool_size", 100)),
+        filter_top_k=int(route.get("filter_top_k", 20)),
+        final_top_n=int(route.get("final_top_n", 10)),
+        sort_by=route.get("sort_by", "relevance"),
+        algorithm=algorithm,
+        history_text=history_text,
+    )
+
+    if not papers:
+        return "⚠️ No papers could be retrieved after scraping and filtering."
+
+    intro = f"Here are the top {len(papers)} papers for **{route.get('query')}**:\n"
+    blocks = []
+    for p in papers:
+        summary = summarize_paper(
+            p["title"],
+            p.get("snippet", ""),
+            p.get("authors_year", ""),
             history_text=history_text,
         )
-
-        if not papers:
-            return "⚠️ I couldn’t retrieve any papers after scraping and filtering. Try refining your query."
-
-        # Summaries + conversational intro
-        intro = (
-            f"Got it — here are the top {len(papers)} papers I recommend "
-            f"for **{route.get('query', user_message)}**:"
+        link = p.get("link") or p.get("scholar_link") or p.get("pdf_link") or ""
+        block = (
+            f"**{p['title']}**\n"
+            f"*{p.get('authors_year','Unknown')}*\n"
+            f"{('[Link](' + link + ')') if link else ''}\n"
+            f"{summary}"
         )
+        blocks.append(block)
 
-        blocks = []
-        for p in papers:
-            summary = summarize_paper(
-                p["title"],
-                p.get("snippet", ""),
-                p.get("authors_year", ""),
-                history_text=history_text,
-            )
-            link = p.get("link") or p.get("scholar_link") or p.get("pdf_link") or ""
-            block = (
-                f"**{p['title']}**\n"
-                f"*{p.get('authors_year','Unknown')}*\n"
-                f"{('[Link](' + link + ')') if link else ''}\n"
-                f"{summary}"
-            )
-            blocks.append(block)
-
-        return intro + "\n\n" + "\n\n---\n\n".join(blocks)
-
-    return "⚠️ I couldn’t determine how to handle that request."
+    return intro + "\n\n---\n\n".join(blocks)
