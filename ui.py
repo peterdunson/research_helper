@@ -45,11 +45,14 @@ if user_input := st.chat_input("Ask me about papers, citations, or concepts...")
                 reply, route = chat_query(
                     user_input, algorithm=algo_flag, history=st.session_state.messages
                 )
-                # If the LLM wants confirmation before scraping
-                if route.get("action") == "confirm_scrape":
+                if route and route.get("action") == "confirm_scrape":
+                    # Store pending route for later confirmation
                     st.session_state.pending_route = route
-                    reply = route.get("reply", "⚠️ Do you want me to scrape Scholar?")
+                    reply = route.get(
+                        "reply", "⚠️ Do you want me to scrape Google Scholar?"
+                    )
             except Exception as e:
+                print(f"⚠️ chat_query error: {e}")
                 reply = f"⚠️ Error: {str(e)}"
                 route = None
 
@@ -59,28 +62,34 @@ if user_input := st.chat_input("Ask me about papers, citations, or concepts...")
 
 # Pending scrape confirmation
 if st.session_state.pending_route:
+    route = st.session_state.pending_route
     with st.chat_message("assistant"):
-        st.markdown(st.session_state.pending_route.get("reply", ""))
+        st.markdown(route.get("reply", ""))
 
-        query = st.session_state.pending_route.get("query", "")
+        query = route.get("query", "")
         if query:
             st.code(query, language="text")
 
         col1, col2 = st.columns(2)
+
         with col1:
             if st.button("✅ Yes, scrape now"):
+                print("🔎 User confirmed scrape, running pipeline...")
                 reply = run_scrape(
-                    st.session_state.pending_route,
-                    algorithm=algo_flag,
-                    history=st.session_state.messages,
+                    route, algorithm=algo_flag, history=st.session_state.messages
                 )
-                st.session_state.messages.append({"role": "assistant", "content": reply})
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": reply}
+                )
                 st.session_state.pending_route = None
                 st.rerun()
+
         with col2:
             if st.button("❌ No, skip it"):
+                print("⏭️ User declined scrape.")
                 st.session_state.messages.append(
                     {"role": "assistant", "content": "Okay, I won’t scrape this time."}
                 )
                 st.session_state.pending_route = None
                 st.rerun()
+

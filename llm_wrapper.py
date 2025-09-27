@@ -61,17 +61,22 @@ def llm_select_papers(
 ):
     """Scrape Scholar → filter → (optionally) LLM rerank top candidates."""
     t0 = time.time()
+    print("⏳ Starting Scholar scrape...")
     pool = search_scholar(query, pool_size=pool_size, sort_by=sort_by, wait_for_user=True)
-    print(f"✅ DONE SCRAPING — got {len(pool)} results in {time.time() - t0:.2f} sec")
+    print(f"✅ DONE SCRAPING — {len(pool)} results in {time.time() - t0:.2f}s")
 
     if not pool:
         return []
 
-    # Step 1. Heuristic filter
+    # Step 1. Filtering
+    t1 = time.time()
+    print(f"⏳ Starting filtering (algorithm={algorithm})...")
     if algorithm == "smart":
         filtered = smart_rank_papers(query, pool, max_results=min(filter_top_k, 30))
     elif algorithm == "bayesian":
-        return bayesian_rank_papers(query, pool, max_results=final_top_n)
+        filtered = bayesian_rank_papers(query, pool, max_results=final_top_n)
+        print(f"✅ Bayesian filter done in {time.time() - t1:.2f}s")
+        return filtered
     else:
         filtered = rank_papers(
             query,
@@ -81,14 +86,16 @@ def llm_select_papers(
             w_cites=w_cites,
             w_recency=w_recency,
         )
+    print(f"✅ Filtering done in {time.time() - t1:.2f}s")
 
     if not filtered:
         return []
 
-    # Step 2. Build compact rerank input (cap at top 12)
+    # Step 2. Build compact rerank input
+    t2 = time.time()
     rerank_candidates = filtered[: min(12, len(filtered))]
     compact_list = "\n\n".join(
-        f"[{i+1}] {p['title']} — {p.get('authors_year','')}\n{p.get('snippet','')}"
+        f"[{i+1}] {p.get('title','No title')} — {p.get('authors_year','')}\n{p.get('snippet','')}"
         for i, p in enumerate(rerank_candidates)
     )
 
@@ -113,7 +120,9 @@ Return ONLY a JSON array of indices (e.g., [2, 5, 1]).
                 model=MODEL,
                 messages=[{"role": "user", "content": rerank_prompt}],
             )
-            ranked_indices = ast.literal_eval(response.choices[0].message.content.strip())
+            ranked_indices = ast.literal_eval(
+                response.choices[0].message.content.strip()
+            )
             break
         except Exception as e:
             print(f"⚠️ LLM rerank failed attempt {attempt+1}: {e}")
@@ -121,11 +130,18 @@ Return ONLY a JSON array of indices (e.g., [2, 5, 1]).
     if not ranked_indices:
         ranked_indices = list(range(1, min(final_top_n, len(rerank_candidates)) + 1))
 
-    return [rerank_candidates[i - 1] for i in ranked_indices if 0 < i <= len(rerank_candidates)]
+    print(f"✅ Rerank done in {time.time() - t2:.2f}s")
+    return [
+        rerank_candidates[i - 1]
+        for i in ranked_indices
+        if 0 < i <= len(rerank_candidates)
+    ]
 
 
 # ── Summaries ─────────────────────────────────────────────────────────────────
-def summarize_paper(title: str, snippet: str, authors_year: str = "", history_text: str = "") -> str:
+def summarize_paper(
+    title: str, snippet: str, authors_year: str = "", history_text: str = ""
+) -> str:
     """Generate a conversational 2–3 sentence summary of a paper."""
     context = f"Title: {title}\nAuthors/Year: {authors_year}\nSnippet: {snippet}"
 
@@ -213,11 +229,14 @@ User message:
     return "⚠️ Router returned unknown action.", None
 
 
-def run_scrape(route: dict, algorithm: str = "smart", history: Optional[List[Dict[str, str]]] = None):
+def run_scrape(
+    route: dict, algorithm: str = "smart", history: Optional[List[Dict[str, str]]] = None
+):
     """Actually run the scrape after user confirmation."""
     history = history or []
     history_text = _clip_history(history)
 
+    print("⏳ Running full scrape pipeline...")
     papers = llm_select_papers(
         query=route.get("query", ""),
         pool_size=int(route.get("pool_size", 100)),
@@ -231,22 +250,26 @@ def run_scrape(route: dict, algorithm: str = "smart", history: Optional[List[Dic
     if not papers:
         return "⚠️ No papers could be retrieved after scraping and filtering."
 
+    print("⏳ Starting summarization...")
+    t3 = time.time()
     intro = f"Here are the top {len(papers)} papers for **{route.get('query')}**:\n"
     blocks = []
     for p in papers:
-        summary = summarize_paper(
-            p["title"],
-            p.get("snippet", ""),
-            p.get("authors_year", ""),
-            history_text=history_text,
-        )
+        title = p.get("title", "No title")
+        authors = p.get("authors_year", "Unknown")
+        snippet = p.get("snippet", "")
         link = p.get("link") or p.get("scholar_link") or p.get("pdf_link") or ""
+
+        summary = summarize_paper(title, snippet, authors, history_text=history_text)
+
         block = (
-            f"**{p['title']}**\n"
-            f"*{p.get('authors_year','Unknown')}*\n"
-            f"{('[Link](' + link + ')') if link else ''}\n"
-            f"{summary}"
+            f"## 📄 {title}\n\n"
+            f"**👥 Authors/Year:** {authors}\n\n"
+            f"**🔗 Link:** {('[Link](' + link + ')') if link else 'N/A'}\n\n"
+            f"**📝 Summary:**\n{summary}\n"
         )
+
         blocks.append(block)
 
+    print(f"✅ Summarization done in {time.time() - t3:.2f}s")
     return intro + "\n\n---\n\n".join(blocks)
