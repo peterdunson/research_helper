@@ -142,7 +142,7 @@ Return ONLY a JSON array of indices (e.g., [2, 5, 1]).
 def summarize_paper(
     title: str, snippet: str, authors_year: str = "", history_text: str = ""
 ) -> str:
-    """Generate a conversational 2–3 sentence summary of a paper."""
+    """Generate a Markdown summary of a paper."""
     context = f"Title: {title}\nAuthors/Year: {authors_year}\nSnippet: {snippet}"
 
     prompt = f"""
@@ -150,7 +150,13 @@ Conversation history (for style/context):
 {history_text}
 
 Summarize this academic paper in 2–3 sentences.
-Focus on the main idea, method, and contribution.
+
+**Formatting requirements:**
+- Return the summary in Markdown.
+- Use bold for important terms if useful.
+- Keep the tone clear and concise.
+
+Context:
 {context}
 """
 
@@ -169,7 +175,7 @@ def chat_query(
 ):
     """
     Router:
-    - If "answer" → direct response.
+    - If "answer" → direct response in Markdown (freeform, not rigid sections).
     - If "scrape" → first ask user for confirmation.
     """
     history = history or []
@@ -193,7 +199,7 @@ If the user is asking a conceptual/explanatory question OR following up on paper
   Output JSON:
   {{
     "action": "answer",
-    "reply": "direct helpful response (can refer to history)"
+    "reply": "helpful response in Markdown (use bold, bullet points, or sections if appropriate)."
   }}
 
 Conversation history:
@@ -212,7 +218,7 @@ User message:
         raw,
         fallback={
             "action": "answer",
-            "reply": "Sorry, I couldn't decide how to handle that.",
+            "reply": "⚠️ Sorry, I couldn't decide how to handle that.",
         },
     )
 
