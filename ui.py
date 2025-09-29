@@ -54,12 +54,8 @@ if user_input := st.chat_input("Ask me about papers, citations, or concepts...")
 
                     def log_update(msg: str):
                         print(msg)
-                        if "logs" not in st.session_state:
-                            st.session_state.logs = []
-                        st.session_state.logs.append(msg)
-                        status_box.markdown(
-                            "```\n" + "\n".join(st.session_state.logs) + "\n```"
-                        )
+                        # overwrite instead of appending
+                        status_box.markdown(f"```\n{msg}\n```")
 
                     reply = verify_titles(
                         titles, history=st.session_state.messages, log_fn=log_update
@@ -90,17 +86,12 @@ if st.session_state.pending_route:
             if st.button("✅ Yes, scrape now"):
                 print("🔎 User confirmed scrape, running pipeline...")
 
-                # Placeholder for live log updates
+                # Placeholder for latest-only log message
                 status_box = st.empty()
 
                 def log_update(msg: str):
                     print(msg)  # still print to terminal
-                    # Append to session log for persistent display
-                    if "logs" not in st.session_state:
-                        st.session_state.logs = []
-                    st.session_state.logs.append(msg)
-                    # Show logs as Markdown block
-                    status_box.markdown("```\n" + "\n".join(st.session_state.logs) + "\n```")
+                    status_box.markdown(f"```\n{msg}\n```")
 
                 reply = run_scrape(
                     route, mode=mode, history=st.session_state.messages, log_fn=log_update
@@ -120,4 +111,3 @@ if st.session_state.pending_route:
                 )
                 st.session_state.pending_route = None
                 st.rerun()
-
