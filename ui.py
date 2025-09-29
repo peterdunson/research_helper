@@ -11,22 +11,14 @@ if "messages" not in st.session_state:
 if "pending_route" not in st.session_state:
     st.session_state.pending_route = None
 
-# Sidebar for algorithm choice
+# Sidebar for mode choice
 with st.sidebar:
     st.header("⚙️ Settings")
-    algorithm = st.selectbox(
-        "Ranking Algorithm",
-        ["Standard", "Super Smart", "Super Super Smart (Bayesian)"],
-        index=1,
+    mode = st.selectbox(
+        "Ranking Mode",
+        ["balanced", "recent", "famous", "influential", "hot"],
+        index=0,
     )
-
-# Map user-friendly name → internal flag
-if algorithm == "Super Smart":
-    algo_flag = "smart"
-elif algorithm.startswith("Super Super"):
-    algo_flag = "bayesian"
-else:
-    algo_flag = "standard"
 
 # Display chat history
 for msg in st.session_state.messages:
@@ -43,7 +35,7 @@ if user_input := st.chat_input("Ask me about papers, citations, or concepts...")
         with st.spinner("🔎 Thinking..."):
             try:
                 reply, route = chat_query(
-                    user_input, algorithm=algo_flag, history=st.session_state.messages
+                    user_input, mode=mode, history=st.session_state.messages
                 )
                 if route and route.get("action") == "confirm_scrape":
                     # Store pending route for later confirmation
@@ -75,9 +67,23 @@ if st.session_state.pending_route:
         with col1:
             if st.button("✅ Yes, scrape now"):
                 print("🔎 User confirmed scrape, running pipeline...")
+
+                # Placeholder for live log updates
+                status_box = st.empty()
+
+                def log_update(msg: str):
+                    print(msg)  # still print to terminal
+                    # Append to session log for persistent display
+                    if "logs" not in st.session_state:
+                        st.session_state.logs = []
+                    st.session_state.logs.append(msg)
+                    # Show logs as Markdown block
+                    status_box.markdown("```\n" + "\n".join(st.session_state.logs) + "\n```")
+
                 reply = run_scrape(
-                    route, algorithm=algo_flag, history=st.session_state.messages
+                    route, mode=mode, history=st.session_state.messages, log_fn=log_update
                 )
+
                 st.session_state.messages.append(
                     {"role": "assistant", "content": reply}
                 )
