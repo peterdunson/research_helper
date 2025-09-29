@@ -3,6 +3,7 @@ import json
 import ast
 import time
 from typing import List, Dict, Optional
+from difflib import SequenceMatcher
 
 from app.scholar import search_scholar, rank_papers
 from openai import OpenAI
@@ -171,12 +172,20 @@ def chat_query(
     Router:
     - If "answer" → direct response in Markdown.
     - If "scrape" → first ask user for confirmation.
+    - If "verify_titles" → check specific paper titles in Scholar.
     """
     history = history or []
     history_text = _clip_history(history)
 
     router_prompt = f"""
 You are a scholarly research assistant.
+
+If the user gives one or more specific paper titles (asking to check if they are real, verify existence, or summarize them):
+  Output JSON:
+  {{
+    "action": "verify_titles",
+    "titles": ["list", "of", "titles", "exactly as given by the user"]
+  }}
 
 If the user is asking for papers, citations, references, "top N", "recent N", or "find/show me papers":
   Output JSON:
@@ -226,7 +235,11 @@ User message:
             route,
         )
 
+    if route.get("action") == "verify_titles":
+        return "🔎 I’ll check these titles in Google Scholar...", route
+
     return "⚠️ Router returned unknown action.", None
+
 
 def run_scrape(
     route: dict,
@@ -284,3 +297,58 @@ def run_scrape(
 
     log(f"✅ Summarization done in {time.time() - t3:.2f}s")
     return intro + "\n\n---\n\n".join(blocks)
+
+
+# ── Verify titles one by one ──────────────────────────────────────────────────
+def verify_titles(
+    titles: List[str],
+    history: Optional[List[Dict[str, str]]] = None,
+    log_fn: Optional[callable] = None,
+):
+    """Verify if given paper titles exist in Google Scholar."""
+    history = history or []
+    history_text = _clip_history(history)
+
+    def log(msg: str):
+        if log_fn:
+            log_fn(msg)
+        else:
+            print(msg)
+
+    results = []
+    for raw_title in titles:
+        log(f"🔎 Checking title: {raw_title}")
+        pool = search_scholar(raw_title, pool_size=10, sort_by="relevance", wait_for_user=False)
+
+        if not pool:
+            results.append(
+                f"## 📄 {raw_title}\n**Status:** ❌ Not found in Google Scholar — probably fake."
+            )
+            continue
+
+        # Compare input with top result
+        best = pool[0]
+        sim = SequenceMatcher(None, raw_title.lower(), best.get("title", "").lower()).ratio()
+
+        if sim > 0.8:
+            summary = summarize_paper(
+                best.get("title", "No title"),
+                best.get("snippet", ""),
+                best.get("authors_year", "Unknown"),
+                history_text=history_text,
+            )
+            block = (
+                f"## 📄 {best.get('title','No title')}\n\n"
+                f"**Status:** ✅ Found in Scholar\n\n"
+                f"**👥 Authors/Year:** {best.get('authors_year','Unknown')}\n\n"
+                f"**📑 Citations:** {best.get('citations','N/A')}\n\n"
+                f"**🔗 Link:** {('[Link](' + (best.get('link') or best.get('scholar_link') or '') + ')') if best.get('link') or best.get('scholar_link') else 'N/A'}\n\n"
+                f"**📝 Summary:**\n{summary}\n"
+            )
+            results.append(block)
+        else:
+            results.append(
+                f"## 📄 {raw_title}\n**Status:** ❌ Not found in Google Scholar — probably fake."
+            )
+
+    return "\n\n---\n\n".join(results)

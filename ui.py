@@ -1,5 +1,5 @@
 import streamlit as st
-from llm_wrapper import chat_query, run_scrape
+from llm_wrapper import chat_query, run_scrape, verify_titles
 
 st.set_page_config(page_title="📚 Research Helper", layout="wide")
 
@@ -37,12 +37,34 @@ if user_input := st.chat_input("Ask me about papers, citations, or concepts...")
                 reply, route = chat_query(
                     user_input, mode=mode, history=st.session_state.messages
                 )
+
                 if route and route.get("action") == "confirm_scrape":
                     # Store pending route for later confirmation
                     st.session_state.pending_route = route
                     reply = route.get(
                         "reply", "⚠️ Do you want me to scrape Google Scholar?"
                     )
+
+                elif route and route.get("action") == "verify_titles":
+                    # Run verification immediately
+                    titles = route.get("titles", [])
+                    print(f"🔎 Verifying titles: {titles}")
+
+                    status_box = st.empty()
+
+                    def log_update(msg: str):
+                        print(msg)
+                        if "logs" not in st.session_state:
+                            st.session_state.logs = []
+                        st.session_state.logs.append(msg)
+                        status_box.markdown(
+                            "```\n" + "\n".join(st.session_state.logs) + "\n```"
+                        )
+
+                    reply = verify_titles(
+                        titles, history=st.session_state.messages, log_fn=log_update
+                    )
+
             except Exception as e:
                 print(f"⚠️ chat_query error: {e}")
                 reply = f"⚠️ Error: {str(e)}"
