@@ -3,7 +3,7 @@ from llm_wrapper import chat_query, run_scrape, verify_titles
 
 st.set_page_config(page_title="📚 Research Helper", layout="wide")
 
-st.title("📚 Research Helper (Chat Mode)")
+st.title("📚 Research Helper")
 
 # Initialize session state
 if "messages" not in st.session_state:
