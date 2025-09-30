@@ -30,7 +30,7 @@ MODES = {
 def _clip_history(history: List[Dict[str, str]], max_chars: int = 4000) -> str:
     if not history:
         return ""
-    tail = history[-8:]
+    tail = history
     chunks, running = [], 0
     for m in tail:
         piece = f"{m['role'].upper()}: {m['content']}\n"
@@ -233,7 +233,7 @@ If the user is asking a conceptual/explanatory question OR following up:
   Output JSON:
   {{
     "action": "answer",
-    "reply": "helpful response in Markdown. Use paragraphs, bullets, or tables depending on context."
+    "reply": "helpful response in **well-formatted Markdown**. Always use:\n- Headings (##, ###) for structure\n- **bold** for key terms\n- Bullet lists where appropriate\n- Paragraph spacing for readability"
   }}
 
 Conversation history:
