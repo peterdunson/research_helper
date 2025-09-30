@@ -1,5 +1,5 @@
 import streamlit as st
-from llm_wrapper import chat_query, run_scrape, verify_titles
+from llm_wrapper import chat_query, run_scholar_lookup
 
 st.set_page_config(page_title="📚 Research Helper", layout="wide")
 
@@ -16,8 +16,8 @@ with st.sidebar:
     st.header("⚙️ Settings")
     mode = st.selectbox(
         "Ranking Mode",
-        ["balanced", "recent", "famous", "influential", "hot"],
-        index=0,
+        ["auto", "balanced", "recent", "famous", "influential", "hot"],  # added auto
+        index=0,  # default = auto
     )
 
 # Display chat history
@@ -38,28 +38,10 @@ if user_input := st.chat_input("Ask me about papers, citations, or concepts...")
                     user_input, mode=mode, history=st.session_state.messages
                 )
 
-                if route and route.get("action") == "confirm_scrape":
+                if route and route.get("action") == "scholar_lookup":
                     # Store pending route for later confirmation
                     st.session_state.pending_route = route
-                    reply = route.get(
-                        "reply", "⚠️ Do you want me to scrape Google Scholar?"
-                    )
-
-                elif route and route.get("action") == "verify_titles":
-                    # Run verification immediately
-                    titles = route.get("titles", [])
-                    print(f"🔎 Verifying titles: {titles}")
-
-                    status_box = st.empty()
-
-                    def log_update(msg: str):
-                        print(msg)
-                        # overwrite instead of appending
-                        status_box.markdown(f"```\n{msg}\n```")
-
-                    reply = verify_titles(
-                        titles, history=st.session_state.messages, log_fn=log_update
-                    )
+                    reply = f"🤔 This request may require a Google Scholar search.\n\nQuery: **{route.get('query','')}**"
 
             except Exception as e:
                 print(f"⚠️ chat_query error: {e}")
@@ -70,7 +52,7 @@ if user_input := st.chat_input("Ask me about papers, citations, or concepts...")
 
     st.session_state.messages.append({"role": "assistant", "content": reply})
 
-# Pending scrape confirmation
+# Pending Scholar lookup confirmation
 if st.session_state.pending_route:
     route = st.session_state.pending_route
     with st.chat_message("assistant"):
@@ -83,18 +65,17 @@ if st.session_state.pending_route:
         col1, col2 = st.columns(2)
 
         with col1:
-            if st.button("✅ Yes, scrape now"):
-                print("🔎 User confirmed scrape, running pipeline...")
+            if st.button("✅ Yes, search now"):
+                print("🔎 User confirmed Scholar lookup...")
 
-                # Placeholder for latest-only log message
                 status_box = st.empty()
 
                 def log_update(msg: str):
-                    print(msg)  # still print to terminal
+                    print(msg)
                     status_box.markdown(f"```\n{msg}\n```")
 
-                reply = run_scrape(
-                    route, mode=mode, history=st.session_state.messages, log_fn=log_update
+                reply = run_scholar_lookup(
+                    route, history=st.session_state.messages, log_fn=log_update
                 )
 
                 st.session_state.messages.append(
@@ -105,9 +86,10 @@ if st.session_state.pending_route:
 
         with col2:
             if st.button("❌ No, skip it"):
-                print("⏭️ User declined scrape.")
+                print("⏭️ User declined Scholar lookup.")
                 st.session_state.messages.append(
-                    {"role": "assistant", "content": "Okay, I won’t scrape this time."}
+                    {"role": "assistant", "content": "Okay, I won’t query Scholar this time."}
                 )
                 st.session_state.pending_route = None
                 st.rerun()
+

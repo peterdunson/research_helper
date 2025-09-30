@@ -2,6 +2,7 @@ import os
 import json
 import ast
 import time
+import re
 from typing import List, Dict, Optional
 from difflib import SequenceMatcher
 
@@ -13,26 +14,24 @@ from dotenv import load_dotenv
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-MODEL = "gpt-5"  # single model everywhere
+MODEL = "gpt-5-mini"  # single model everywhere
 
 # ── Ranking modes (similarity, citations, recency weights) ─────────────────────
 MODES = {
     "balanced": dict(w_sim=0.5, w_cites=0.3, w_recency=0.2),
-    "recent": dict(w_sim=0.3, w_cites=0.2, w_recency=0.5),
+    "recent": dict(w_sim=0.25, w_cites=0.15, w_recency=0.6),
     "famous": dict(w_sim=0.2, w_cites=0.7, w_recency=0.1),
     "influential": dict(w_sim=0.4, w_cites=0.4, w_recency=0.2),
     "hot": dict(w_sim=0.3, w_cites=0.4, w_recency=0.3),
+    "auto": None,  # let LLM decide
 }
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 def _clip_history(history: List[Dict[str, str]], max_chars: int = 4000) -> str:
-    """Turn last few chat messages into a compact transcript for LLM context."""
     if not history:
         return ""
-
     tail = history[-8:]
-    chunks = []
-    running = 0
+    chunks, running = [], 0
     for m in tail:
         piece = f"{m['role'].upper()}: {m['content']}\n"
         running += len(piece)
@@ -50,7 +49,7 @@ def _safe_json(s: str, fallback: dict) -> dict:
         return fallback
 
 
-# ── Core pipeline (scrape → filter → optional LLM rerank) ─────────────────────
+# ── Core pipeline (broad search) ──────────────────────────────────────────────
 def llm_select_papers(
     query: str,
     pool_size: int = 100,
@@ -60,19 +59,11 @@ def llm_select_papers(
     mode: str = "balanced",
     history_text: str = "",
 ):
-    """Scrape Scholar → filter with mode → LLM rerank top candidates."""
     t0 = time.time()
-    print("⏳ Starting Scholar scrape...")
     pool = search_scholar(query, pool_size=pool_size, sort_by=sort_by, wait_for_user=True)
-    print(f"✅ DONE SCRAPING — {len(pool)} results in {time.time() - t0:.2f}s")
-
     if not pool:
         return []
-
-    # Step 1. Filtering with mode
-    t1 = time.time()
     weights = MODES.get(mode, MODES["balanced"])
-    print(f"⏳ Starting filtering (mode={mode}, weights={weights})...")
     filtered = rank_papers(
         query,
         pool,
@@ -81,24 +72,18 @@ def llm_select_papers(
         w_cites=weights["w_cites"],
         w_recency=weights["w_recency"],
     )
-    print(f"✅ Filtering done in {time.time() - t1:.2f}s")
-
     if not filtered:
         return []
-
-    # Step 2. Build compact rerank input
-    t2 = time.time()
     rerank_candidates = filtered[: min(12, len(filtered))]
     compact_list = "\n\n".join(
         f"[{i+1}] {p.get('title','No title')} — {p.get('authors_year','')}\n{p.get('snippet','')}"
         for i, p in enumerate(rerank_candidates)
     )
-
     rerank_prompt = f"""
-Conversation context (resolve pronouns like 'those papers'):
+Conversation context:
 {history_text}
 
-User intent/topic to rank for:
+User query:
 {query}
 
 Candidate papers:
@@ -107,25 +92,19 @@ Candidate papers:
 Select the {final_top_n} most relevant papers.
 Return ONLY a JSON array of indices (e.g., [2, 5, 1]).
 """
-
-    ranked_indices: Optional[List[int]] = None
+    ranked_indices = None
     for attempt in range(2):
         try:
             response = client.chat.completions.create(
                 model=MODEL,
                 messages=[{"role": "user", "content": rerank_prompt}],
             )
-            ranked_indices = ast.literal_eval(
-                response.choices[0].message.content.strip()
-            )
+            ranked_indices = ast.literal_eval(response.choices[0].message.content.strip())
             break
         except Exception as e:
             print(f"⚠️ LLM rerank failed attempt {attempt+1}: {e}")
-
     if not ranked_indices:
         ranked_indices = list(range(1, min(final_top_n, len(rerank_candidates)) + 1))
-
-    print(f"✅ Rerank done in {time.time() - t2:.2f}s")
     return [
         rerank_candidates[i - 1]
         for i in ranked_indices
@@ -133,76 +112,128 @@ Return ONLY a JSON array of indices (e.g., [2, 5, 1]).
     ]
 
 
-# ── Summaries ─────────────────────────────────────────────────────────────────
-def summarize_paper(
-    title: str, snippet: str, authors_year: str = "", history_text: str = ""
-) -> str:
-    """Generate a Markdown summary of a paper."""
-    context = f"Title: {title}\nAuthors/Year: {authors_year}\nSnippet: {snippet}"
-
+# ── Batch summaries ───────────────────────────────────────────────────────────
+def summarize_papers(papers: List[Dict], history_text: str = "") -> List[str]:
+    paper_contexts = []
+    for i, p in enumerate(papers, 1):
+        paper_contexts.append(
+            f"[{i}] Title: {p.get('title','No title')}\n"
+            f"Authors/Year: {p.get('authors_year','Unknown')}\n"
+            f"Snippet: {p.get('snippet','')}"
+        )
     prompt = f"""
-Conversation history (for style/context):
+You are an assistant that ONLY summarizes papers.
+
+Task: Summarize each of the following academic papers in 2–3 sentences.
+Return one summary per paper, numbered [1], [2], etc.
+
+Rules:
+- Direct summaries only. No questions.
+- Use Markdown.
+- Bold important terms if helpful.
+- Be concise and factual.
+
+Conversation context:
 {history_text}
 
-Summarize this academic paper in 2–3 sentences.
-
-**Formatting requirements:**
-- Return the summary in Markdown.
-- Use bold for important terms if useful.
-- Keep the tone clear and concise.
-
-Context:
-{context}
+Papers:
+{chr(10).join(paper_contexts)}
 """
-
     response = client.chat.completions.create(
-        model=MODEL,
-        messages=[{"role": "user", "content": prompt}],
+        model=MODEL, messages=[{"role": "user", "content": prompt}]
     )
-    return response.choices[0].message.content.strip()
+    text = response.choices[0].message.content.strip()
+    summaries = []
+    for i in range(1, len(papers) + 1):
+        marker = f"[{i}]"
+        if marker in text:
+            part = text.split(marker, 1)[1]
+            next_marker = f"[{i+1}]"
+            piece = part.split(next_marker)[0].strip() if next_marker in part else part.strip()
+            summaries.append(piece)
+        else:
+            summaries.append("⚠️ Summary missing")
+    return summaries
 
 
-# ── Router (ask for confirmation before scraping) ──────────────────────────────
-def chat_query(
-    user_message: str,
-    mode: str = "balanced",
-    history: Optional[List[Dict[str, str]]] = None,
+# ── Generalized Scholar lookup ────────────────────────────────────────────────
+def scholar_lookup(
+    query: str,
+    mode: str = "broad",
+    pool_size: int = 100,
+    filter_top_k: int = 20,
+    final_top_n: int = 10,
+    sort_by: str = "relevance",
+    history_text: str = "",
 ):
-    """
-    Router:
-    - If "answer" → direct response in Markdown.
-    - If "scrape" → first ask user for confirmation.
-    - If "verify_titles" → check specific paper titles in Scholar.
-    """
+    if mode == "broad":
+        return llm_select_papers(
+            query=query,
+            pool_size=pool_size,
+            filter_top_k=filter_top_k,
+            final_top_n=final_top_n,
+            sort_by=sort_by,
+            mode="balanced",
+            history_text=history_text,
+        )
+    elif mode == "direct":
+        pool = search_scholar(query, pool_size=3, sort_by=sort_by, wait_for_user=False)
+        return pool if pool else []
+    return []
+
+
+# ── Router ────────────────────────────────────────────────────────────────────
+def chat_query(user_message: str, mode: str = "balanced", history: Optional[List[Dict[str, str]]] = None):
     history = history or []
     history_text = _clip_history(history)
+
+    # 🔹 Extract "N papers" or "top N" from user request
+    match = re.search(r"\b(?:top\s*)?(\d+)\s+(?:papers|articles|studies)\b", user_message.lower())
+    requested_n = int(match.group(1)) if match else 10
+
+    # 🔹 Resolve auto mode via LLM
+    if mode == "auto":
+        mode_prompt = """
+You are deciding the best Scholar ranking mode based on the user query.
+
+Available modes (weights = similarity, citations, recency):
+- balanced: 0.5, 0.3, 0.2
+- recent: 0.3, 0.2, 0.5
+- famous: 0.2, 0.7, 0.1
+- influential: 0.4, 0.4, 0.2
+- hot: 0.3, 0.4, 0.3
+
+Pick ONE mode name (just the word).
+"""
+        resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": mode_prompt + "\n\nUser query:\n" + user_message}],
+        )
+        picked = resp.choices[0].message.content.strip().lower()
+        if picked in MODES and picked != "auto":
+            mode = picked
+        else:
+            mode = "balanced"
 
     router_prompt = f"""
 You are a scholarly research assistant.
 
-If the user gives one or more specific paper titles (asking to check if they are real, verify existence, or summarize them):
+If the user asks for papers, citations, references, or to check a specific title:
   Output JSON:
   {{
-    "action": "verify_titles",
-    "titles": ["list", "of", "titles", "exactly as given by the user"]
-  }}
-
-If the user is asking for papers, citations, references, "top N", "recent N", or "find/show me papers":
-  Output JSON:
-  {{
-    "action": "confirm_scrape",
+    "action": "scholar_lookup",
     "query": "optimized Scholar search query string",
-    "sort_by": "relevance" or "date",
+    "mode": "broad" or "direct",
     "pool_size": 100,
     "filter_top_k": 20,
-    "final_top_n": <integer or 10 if not clear>
+    "final_top_n": {requested_n}
   }}
 
-If the user is asking a conceptual/explanatory question OR following up on papers already listed:
+If the user is asking a conceptual/explanatory question OR following up:
   Output JSON:
   {{
     "action": "answer",
-    "reply": "helpful response in Markdown (use bold, bullet points, or sections if appropriate)."
+    "reply": "helpful response in Markdown. Use paragraphs, bullets, or tables depending on context."
   }}
 
 Conversation history:
@@ -211,146 +242,64 @@ Conversation history:
 User message:
 {user_message}
 """
-
     raw = client.chat.completions.create(
-        model=MODEL,
-        messages=[{"role": "user", "content": router_prompt}],
+        model=MODEL, messages=[{"role": "user", "content": router_prompt}]
     ).choices[0].message.content
-
-    route = _safe_json(
-        raw,
-        fallback={
-            "action": "answer",
-            "reply": "⚠️ Sorry, I couldn't decide how to handle that.",
-        },
-    )
+    route = _safe_json(raw, fallback={"action": "answer", "reply": "⚠️ Couldn't decide."})
 
     if route.get("action") == "answer":
         return route.get("reply", ""), None
 
-    if route.get("action") == "confirm_scrape":
-        return (
-            f"🤔 I think this request may require a Google Scholar search.\n\n"
-            f"Do you want me to scrape Scholar with query: **{route.get('query')}** ?",
-            route,
-        )
-
-    if route.get("action") == "verify_titles":
-        return "🔎 I’ll check these titles in Google Scholar...", route
+    if route.get("action") == "scholar_lookup":
+        # Attach chosen mode for later
+        route["ranking_mode"] = mode
+        return f"🔎 Let me check Google Scholar for: **{route.get('query')}** (mode={mode})", route
 
     return "⚠️ Router returned unknown action.", None
 
 
-def run_scrape(
-    route: dict,
-    mode: str = "balanced",
-    history: Optional[List[Dict[str, str]]] = None,
-    log_fn: Optional[callable] = None,
-):
-    """Actually run the scrape after user confirmation, with optional logging to UI."""
+# ── Run Scholar lookup ────────────────────────────────────────────────────────
+def run_scholar_lookup(route: dict, history: Optional[List[Dict[str, str]]] = None, log_fn: Optional[callable] = None):
     history = history or []
     history_text = _clip_history(history)
 
-    # Wrapper to send logs to Streamlit if log_fn is provided
     def log(msg: str):
-        if log_fn:
-            log_fn(msg)   # update UI
-        else:
-            print(msg)    # fallback to terminal
+        if log_fn: log_fn(msg)
+        else: print(msg)
 
-    log("⏳ Running full scrape pipeline...")
-    papers = llm_select_papers(
+    log("⏳ Running Scholar lookup pipeline...")
+    papers = scholar_lookup(
         query=route.get("query", ""),
+        mode=route.get("mode", "broad"),
         pool_size=int(route.get("pool_size", 100)),
         filter_top_k=int(route.get("filter_top_k", 20)),
         final_top_n=int(route.get("final_top_n", 10)),
         sort_by=route.get("sort_by", "relevance"),
-        mode=mode,
         history_text=history_text,
     )
-
     if not papers:
-        return "⚠️ No papers could be retrieved after scraping and filtering."
+        return "⚠️ No papers could be retrieved."
+
+    if route.get("mode") == "direct":
+        best = papers[0]
+        sim = SequenceMatcher(None, route.get("query","").lower(), best.get("title","").lower()).ratio()
+        if sim > 0.85:
+            return f"## 📄 {best.get('title')}\n**Status:** ✅ Found\n**👥 Authors/Year:** {best.get('authors_year','Unknown')}\n**📑 Citations:** {best.get('citations','N/A')}\n**🔗 Link:** {best.get('link') or best.get('scholar_link') or 'N/A'}"
+        else:
+            return f"## 📄 {route.get('query')}\n**Status:** ❌ Not found in Google Scholar — probably fake."
 
     log("⏳ Starting summarization...")
-    t3 = time.time()
-    intro = f"Here are the top {len(papers)} papers for **{route.get('query')}**:\n"
+    summaries = summarize_papers(papers, history_text=history_text)
     blocks = []
-    for p in papers:
-        title = p.get("title", "No title")
-        authors = p.get("authors_year", "Unknown")
-        snippet = p.get("snippet", "")
-        link = p.get("link") or p.get("scholar_link") or p.get("pdf_link") or ""
-        citations = p.get("citations", "N/A")
-
-        summary = summarize_paper(title, snippet, authors, history_text=history_text)
-
+    for p, summary in zip(papers, summaries):
         block = (
-            f"## 📄 {title}\n\n"
-            f"**👥 Authors/Year:** {authors}\n\n"
-            f"**🔗 Link:** {('[Link](' + link + ')') if link else 'N/A'}\n\n"
-            f"**📑 Citations:** {citations}\n\n"
+            f"## 📄 {p.get('title','No title')}\n\n"
+            f"**👥 Authors/Year:** {p.get('authors_year','Unknown')}\n\n"
+            f"**🔗 Link:** {p.get('link') or p.get('scholar_link') or 'N/A'}\n\n"
+            f"**📑 Citations:** {p.get('citations','N/A')}\n\n"
             f"**📝 Summary:**\n{summary}\n"
         )
-
         blocks.append(block)
 
-    log(f"✅ Summarization done in {time.time() - t3:.2f}s")
-    return intro + "\n\n---\n\n".join(blocks)
-
-
-# ── Verify titles one by one ──────────────────────────────────────────────────
-def verify_titles(
-    titles: List[str],
-    history: Optional[List[Dict[str, str]]] = None,
-    log_fn: Optional[callable] = None,
-):
-    """Verify if given paper titles exist in Google Scholar."""
-    history = history or []
-    history_text = _clip_history(history)
-
-    def log(msg: str):
-        if log_fn:
-            log_fn(msg)
-        else:
-            print(msg)
-
-    results = []
-    for raw_title in titles:
-        log(f"🔎 Checking title: {raw_title}")
-        pool = search_scholar(raw_title, pool_size=10, sort_by="relevance", wait_for_user=False)
-
-        if not pool:
-            results.append(
-                f"## 📄 {raw_title}\n**Status:** ❌ Not found in Google Scholar — probably fake."
-            )
-            continue
-
-        # Compare input with top result
-        ranked = rank_papers(raw_title, pool, max_results=1)
-        best = ranked[0] if ranked else pool[0]
-
-        sim = SequenceMatcher(None, raw_title.lower(), best.get("title", "").lower()).ratio()
-
-        if sim > 0.85:
-            summary = summarize_paper(
-                best.get("title", "No title"),
-                best.get("snippet", ""),
-                best.get("authors_year", "Unknown"),
-                history_text=history_text,
-            )
-            block = (
-                f"## 📄 {best.get('title','No title')}\n\n"
-                f"**Status:** ✅ Found in Scholar\n\n"
-                f"**👥 Authors/Year:** {best.get('authors_year','Unknown')}\n\n"
-                f"**📑 Citations:** {best.get('citations','N/A')}\n\n"
-                f"**🔗 Link:** {('[Link](' + (best.get('link') or best.get('scholar_link') or '') + ')') if best.get('link') or best.get('scholar_link') else 'N/A'}\n\n"
-                f"**📝 Summary:**\n{summary}\n"
-            )
-            results.append(block)
-        else:
-            results.append(
-                f"## 📄 {raw_title}\n**Status:** ❌ Not found in Google Scholar — probably fake."
-            )
-
-    return "\n\n---\n\n".join(results)
+    ranking_mode = route.get("ranking_mode", "balanced")
+    return f"Here are {len(papers)} papers for **{route.get('query')}** (mode={ranking_mode}):\n\n" + "\n\n---\n\n".join(blocks)
