@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-MODEL = "gpt-5-mini"  # single model everywhere
+MODEL = "gpt-5"  # single model everywhere
 
 # ── Ranking modes (similarity, citations, recency weights) ─────────────────────
 MODES = {
@@ -327,10 +327,12 @@ def verify_titles(
             continue
 
         # Compare input with top result
-        best = pool[0]
+        ranked = rank_papers(raw_title, pool, max_results=1)
+        best = ranked[0] if ranked else pool[0]
+
         sim = SequenceMatcher(None, raw_title.lower(), best.get("title", "").lower()).ratio()
 
-        if sim > 0.8:
+        if sim > 0.85:
             summary = summarize_paper(
                 best.get("title", "No title"),
                 best.get("snippet", ""),

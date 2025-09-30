@@ -102,9 +102,18 @@ def search_scholar(query: str, pool_size: int = 100, sort_by: str = "relevance",
                 if footer:
                     cite_link = footer.find("a", string=lambda s: s and "Cited by" in s)
                     if cite_link:
-                        try:
-                            citations = int(cite_link.text.replace("Cited by", "").strip())
-                        except ValueError:
+                        raw = cite_link.get_text(" ", strip=True)
+                        cleaned = (
+                            raw.replace("Cited by", "")
+                            .replace("\xa0", "")   # non-breaking space
+                            .replace("\u202f", "") # narrow space
+                            .replace(",", "")      # thousands separator
+                            .replace(".", "")      # fallback
+                            .strip()
+                        )
+                        if cleaned.isdigit():
+                            citations = int(cleaned)
+                        else:
                             citations = None
                 year = None
                 match = re.search(r"\b(19|20)\d{2}\b", authors_year_text)
